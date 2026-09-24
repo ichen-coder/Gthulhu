@@ -66,7 +66,7 @@ type Config struct {
 	Scheduler       SchedulerConfig       `yaml:"scheduler" description:"Scheduler-specific configuration (advanced feature)"`
 	SimpleScheduler SimpleSchedulerConfig `yaml:"simple_scheduler,omitempty" description:"Simple scheduler mode configuration"`
 	Monitor         MonitorConfig         `yaml:"monitor" description:"Pod-level scheduling metrics monitor (base feature)"`
-	Debug           bool                  `yaml:"debug,omitempty" description:"Enable debug mode (pprof server on :6060)"`
+	Debug           bool                  `yaml:"debug,omitempty" description:"Enable debug mode (pprof server on 127.0.0.1:6060)"`
 	EarlyProcessing bool                  `yaml:"early_processing,omitempty" description:"Enable early processing of tasks in BPF before user-space dispatch"`
 	BuiltinIdle     bool                  `yaml:"builtin_idle,omitempty" description:"Enable built-in idle CPU selection in BPF"`
 	Api             ApiConfig             `yaml:"api" description:"API server connection configuration"`

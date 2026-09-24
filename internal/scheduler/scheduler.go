@@ -232,7 +232,7 @@ func Run(args []string) error {
 
 	if cfg.IsDebugEnabled() {
 		go func() {
-			if err := http.ListenAndServe(":6060", nil); err != nil {
+			if err := http.ListenAndServe("127.0.0.1:6060", nil); err != nil {
 				slog.Warn("pprof server error", "error", err)
 			}
 		}()
