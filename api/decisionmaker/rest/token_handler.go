@@ -29,7 +29,7 @@ func (h Handler) GenTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	token, expiredAt, err := h.Service.VerifyAndGenerateToken(r.Context(), req.ClientID, req.ClientAssertion)
 	if err != nil {
-		h.ErrorResponse(ctx, w, http.StatusUnauthorized, "Public key verification failed ", err)
+		h.ErrorResponse(ctx, w, http.StatusUnauthorized, "Client assertion verification failed", err)
 		return
 	}
 

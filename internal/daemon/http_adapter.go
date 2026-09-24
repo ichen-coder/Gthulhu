@@ -127,8 +127,11 @@ func writeJSON(w http.ResponseWriter, status int, payload map[string]any) {
 func isLoopbackRequest(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		host = r.RemoteAddr
+		return true
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback()
 }
