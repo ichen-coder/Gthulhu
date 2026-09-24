@@ -47,3 +47,18 @@ func TestLoadTokenRejectsSymlink(t *testing.T) {
 		t.Fatal("expected LoadToken to reject symlink")
 	}
 }
+
+func TestAtomicWritePrivateFileCreatesParentDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "token.json")
+	if err := atomicWritePrivateFile(path, []byte("token")); err != nil {
+		t.Fatalf("atomicWritePrivateFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("permissions=%o, want 600", got)
+	}
+}
