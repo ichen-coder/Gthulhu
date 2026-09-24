@@ -46,6 +46,7 @@ func TestControlAPI_StatusMethodNotAllowed(t *testing.T) {
 	h := newTestHandler(state, store, restartReqCh)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/status", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
 	rr := httptest.NewRecorder()
 	h.routes().ServeHTTP(rr, req)
 
@@ -64,6 +65,7 @@ func TestControlAPI_RuntimeConfigSameVersionNoop(t *testing.T) {
 	body := runtimeConfigRequest{ConfigVersion: "v1"}
 	buf, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runtime-config", bytes.NewReader(buf))
+	req.RemoteAddr = "127.0.0.1:12345"
 	rr := httptest.NewRecorder()
 	h.routes().ServeHTTP(rr, req)
 
@@ -90,6 +92,7 @@ func TestControlAPI_RuntimeConfigApplyChangedTriggersRestart(t *testing.T) {
 	body := runtimeConfigRequest{ConfigVersion: "v2", Mode: "gthulhu", SchedulerEnabled: &schedulerEnabled}
 	buf, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runtime-config", bytes.NewReader(buf))
+	req.RemoteAddr = "127.0.0.1:12345"
 	rr := httptest.NewRecorder()
 	h.routes().ServeHTTP(rr, req)
 
@@ -118,6 +121,7 @@ func TestControlAPI_RuntimeConfigApplyError(t *testing.T) {
 	body := runtimeConfigRequest{ConfigVersion: "v3"}
 	buf, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runtime-config", bytes.NewReader(buf))
+	req.RemoteAddr = "127.0.0.1:12345"
 	rr := httptest.NewRecorder()
 	h.routes().ServeHTTP(rr, req)
 
@@ -136,5 +140,21 @@ func TestControlAPI_RuntimeConfigApplyError(t *testing.T) {
 	case <-restartReqCh:
 		t.Fatalf("unexpected restart signal when apply failed")
 	default:
+	}
+}
+
+func TestControlAPI_RejectsNonLoopbackRequests(t *testing.T) {
+	state := &controlState{}
+	store := &mockRuntimeConfigStore{}
+	restartReqCh := make(chan struct{}, 1)
+	h := newTestHandler(state, store, restartReqCh)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.RemoteAddr = "192.0.2.10:12345"
+	rr := httptest.NewRecorder()
+	h.routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d", rr.Code, http.StatusForbidden)
 	}
 }

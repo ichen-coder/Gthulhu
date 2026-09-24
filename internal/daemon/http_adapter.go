@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 )
 
@@ -47,6 +48,10 @@ func (h *controlAPIHandler) handleHealth(w http.ResponseWriter, _ *http.Request)
 }
 
 func (h *controlAPIHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if !isLoopbackRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"success": false, "error": "forbidden"})
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"success": false, "error": "method not allowed"})
 		return
@@ -55,6 +60,10 @@ func (h *controlAPIHandler) handleStatus(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *controlAPIHandler) handleRuntimeConfig(w http.ResponseWriter, r *http.Request) {
+	if !isLoopbackRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"success": false, "error": "forbidden"})
+		return
+	}
 	ctx := r.Context()
 	switch r.Method {
 	case http.MethodGet:
@@ -113,4 +122,13 @@ func writeJSON(w http.ResponseWriter, status int, payload map[string]any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

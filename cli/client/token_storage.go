@@ -6,7 +6,9 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -45,7 +47,7 @@ func SaveToken(token string, expiresAt time.Time) error {
 		return fmt.Errorf("marshal token: %w", err)
 	}
 
-	if err := os.WriteFile(tokenFile, data, 0600); err != nil {
+	if err := atomicWritePrivateFile(tokenFile, data); err != nil {
 		return fmt.Errorf("write token file: %w", err)
 	}
 
@@ -57,6 +59,13 @@ func LoadToken() (string, time.Time, error) {
 	tokenFile, err := getTokenFilePath()
 	if err != nil {
 		return "", time.Time{}, err
+	}
+
+	if err := ensurePrivateRegularFile(tokenFile); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", time.Time{}, nil
+		}
+		return "", time.Time{}, fmt.Errorf("validate token file: %w", err)
 	}
 
 	data, err := os.ReadFile(tokenFile)
@@ -91,5 +100,56 @@ func ClearToken() error {
 		return fmt.Errorf("remove token file: %w", err)
 	}
 
+	return nil
+}
+
+func atomicWritePrivateFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		_ = tmpFile.Close()
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmpFile.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+func ensurePrivateRegularFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("token file must not be a symlink")
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("token file must be a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("token file permissions are too permissive: %o", info.Mode().Perm())
+	}
 	return nil
 }

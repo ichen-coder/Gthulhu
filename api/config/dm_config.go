@@ -55,6 +55,8 @@ func InitDMConfig(configName string, configPath string) (DecisionMakerConfig, er
 }
 
 type TokenConfig struct {
-	RsaPrivateKeyPem SecretValue `mapstructure:"rsa_private_key_pem"`
-	TokenDurationHr  int         `mapstructure:"token_duration_hr"` // in hours
+	RsaPrivateKeyPem       SecretValue `mapstructure:"rsa_private_key_pem"`
+	TrustedClientPublicKey SecretValue `mapstructure:"trusted_client_public_key_pem"`
+	ExpectedClientID       string      `mapstructure:"expected_client_id"`
+	TokenDurationHr        int         `mapstructure:"token_duration_hr"` // in hours
 }

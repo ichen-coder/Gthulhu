@@ -42,6 +42,7 @@ func NewService(params Params) (*Service, error) {
 		metricCollector:      NewMetricCollector(machineID),
 		podSchedCollector:    NewPodSchedMetricCollector(machineID),
 		jwtPrivateKey:        privateKey,
+		tokenConfig:          params.TokenConfig,
 		daemonEndpoint:       strings.TrimRight(params.DaemonConfig.Endpoint, "/"),
 		daemonHTTPClient: &http.Client{
 			Timeout: time.Duration(max(params.DaemonConfig.TimeoutSec, 5)) * time.Second,

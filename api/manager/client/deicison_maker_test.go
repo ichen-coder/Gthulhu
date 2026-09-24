@@ -5,9 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"net"
@@ -20,6 +22,7 @@ import (
 
 	cache "github.com/Code-Hex/go-generics-cache"
 	"github.com/Gthulhu/api/config"
+	dmrest "github.com/Gthulhu/api/decisionmaker/rest"
 	"github.com/Gthulhu/api/manager/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,6 +104,36 @@ func TestApplyRuntimeConfigSuccess(t *testing.T) {
 		MonitoringEnabled: true,
 	})
 	require.NoError(t, err)
+}
+
+func TestGetTokenUsesSignedClientAssertion(t *testing.T) {
+	managerKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	var gotReq dmrest.TokenRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/auth/token", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotReq))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"success":true,"data":{"token":"fresh-token","expired_at":4102444800}}`))
+	}))
+	defer server.Close()
+
+	managerKeyPEM := encodeRSAPrivateKeyPEM(t, managerKey)
+	clientIface, err := NewDecisionMakerClient(config.KeyConfig{
+		RsaPrivateKeyPem: config.SecretValue(managerKeyPEM),
+		ClientID:         "manager-client",
+	}, config.MTLSConfig{})
+	require.NoError(t, err)
+
+	dm := newDecisionMakerPodFromServerURL(t, server.URL)
+	client := clientIface.(*DecisionMakerClient)
+	token, err := client.GetToken(context.Background(), dm)
+	require.NoError(t, err)
+	assert.Equal(t, "fresh-token", token)
+	assert.Equal(t, "manager-client", gotReq.ClientID)
+	assert.NotEmpty(t, gotReq.ClientAssertion)
 }
 
 func TestGetRuntimeConfigStatusSuccess(t *testing.T) {
@@ -344,6 +377,7 @@ func generateTestCerts(t *testing.T) testCerts {
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 	}
+
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
 	require.NoError(t, err)
 	caCert, err := x509.ParseCertificate(caDER)
@@ -371,4 +405,12 @@ func generateTestCerts(t *testing.T) testCerts {
 	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: leafKeyDER}))
 
 	return testCerts{caPEM: caPEM, certPEM: certPEM, keyPEM: keyPEM}
+}
+
+func encodeRSAPrivateKeyPEM(t *testing.T, key *rsa.PrivateKey) string {
+	t.Helper()
+	return string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}))
 }
