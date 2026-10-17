@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -14,12 +15,24 @@ import (
 	cache "github.com/Code-Hex/go-generics-cache"
 	"github.com/Gthulhu/api/config"
 	dmrest "github.com/Gthulhu/api/decisionmaker/rest"
+	dmsvc "github.com/Gthulhu/api/decisionmaker/service"
 	"github.com/Gthulhu/api/manager/domain"
 	"github.com/Gthulhu/api/pkg/logger"
+	"github.com/Gthulhu/api/pkg/util"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func NewDecisionMakerClient(keyConfig config.KeyConfig, mtlsCfg config.MTLSConfig) (domain.DecisionMakerAdapter, error) {
 	httpClient := http.DefaultClient
+	var clientPrivateKey *rsa.PrivateKey
+
+	if keyConfig.RsaPrivateKeyPem.Value() != "" {
+		privateKey, err := util.InitRSAPrivateKey(keyConfig.RsaPrivateKeyPem.Value())
+		if err != nil {
+			return nil, fmt.Errorf("load manager private key: %w", err)
+		}
+		clientPrivateKey = privateKey
+	}
 
 	if mtlsCfg.Enable {
 		cert, err := tls.X509KeyPair([]byte(mtlsCfg.CertPem.Value()), []byte(mtlsCfg.KeyPem.Value()))
@@ -52,21 +65,21 @@ func NewDecisionMakerClient(keyConfig config.KeyConfig, mtlsCfg config.MTLSConfi
 	}
 
 	return &DecisionMakerClient{
-		Client:         httpClient,
-		mtlsEnabled:    mtlsCfg.Enable,
-		tokenPublicKey: keyConfig.DMPublicKeyPem.Value(),
-		clientID:       keyConfig.ClientID,
-		tokenCache:     cache.New[string, string](),
+		Client:      httpClient,
+		mtlsEnabled: mtlsCfg.Enable,
+		clientKey:   clientPrivateKey,
+		clientID:    keyConfig.ClientID,
+		tokenCache:  cache.New[string, string](),
 	}, nil
 }
 
 type DecisionMakerClient struct {
 	*http.Client
 
-	mtlsEnabled    bool
-	tokenPublicKey string
-	clientID       string
-	tokenCache     *cache.Cache[string, string]
+	mtlsEnabled bool
+	clientKey   *rsa.PrivateKey
+	clientID    string
+	tokenCache  *cache.Cache[string, string]
 }
 
 // scheme returns "https" when mTLS is enabled, "http" otherwise.
@@ -159,10 +172,18 @@ func (dm *DecisionMakerClient) GetToken(ctx context.Context, decisionMaker *doma
 	if token, ok := dm.tokenCache.Get(decisionMaker.NodeID); ok {
 		return token, nil
 	}
+	if dm.clientKey == nil {
+		return "", fmt.Errorf("decision maker client private key is not configured")
+	}
+
+	clientAssertion, err := dm.createClientAssertion()
+	if err != nil {
+		return "", err
+	}
 
 	req := dmrest.TokenRequest{
-		PublicKey: dm.tokenPublicKey,
-		ClientID:  dm.clientID,
+		ClientID:        dm.clientID,
+		ClientAssertion: clientAssertion,
 	}
 	jsonBody, err := json.Marshal(req)
 	if err != nil {
@@ -188,11 +209,31 @@ func (dm *DecisionMakerClient) GetToken(ctx context.Context, decisionMaker *doma
 	if err != nil {
 		return "", err
 	}
-
-	ttl := time.Now().Unix() - tokenResp.Data.ExpiredAt - 60
-
-	dm.tokenCache.Set(decisionMaker.NodeID, tokenResp.Data.Token, cache.WithExpiration(time.Duration(ttl)*time.Second))
+	ttl := tokenResp.Data.ExpiredAt - time.Now().Unix() - 60
+	if ttl > 0 {
+		dm.tokenCache.Set(decisionMaker.NodeID, tokenResp.Data.Token, cache.WithExpiration(time.Duration(ttl)*time.Second))
+	}
 	return tokenResp.Data.Token, nil
+}
+
+func (dm *DecisionMakerClient) createClientAssertion() (string, error) {
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"client_id":  dm.clientID,
+		"token_type": dmsvc.DMClientAssertionType,
+		"iss":        dm.clientID,
+		"sub":        dm.clientID,
+		"aud":        []string{dmsvc.DMClientAssertionAudience},
+		"iat":        now.Unix(),
+		"nbf":        now.Unix(),
+		"exp":        now.Add(time.Minute).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tokenString, err := token.SignedString(dm.clientKey)
+	if err != nil {
+		return "", fmt.Errorf("sign client assertion: %w", err)
+	}
+	return tokenString, nil
 }
 
 func (dm *DecisionMakerClient) DeleteSchedulingIntents(ctx context.Context, decisionMaker *domain.DecisionMakerPod, req *domain.DeleteIntentsRequest) error {

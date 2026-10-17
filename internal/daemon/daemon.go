@@ -37,7 +37,7 @@ func Run(args []string) error {
 	restartDelay := fs.Duration("restart-delay", 2*time.Second, "Delay before restarting scheduler process")
 	schedulerBin := fs.String("scheduler-bin", "", "Path to scheduler binary (default: current executable)")
 	runtimeConfigPath := fs.String("runtime-config-path", "/tmp/gthulhu/runtime-config.yaml", "Path to daemon-managed runtime YAML config file")
-	controlAddr := fs.String("control-addr", ":18080", "Daemon control API bind address")
+	controlAddr := fs.String("control-addr", "127.0.0.1:18080", "Daemon control API bind address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func initializeRuntimeConfig(bootstrapConfigPath string, runtimeConfigPath strin
 	if err != nil {
 		return fmt.Errorf("load bootstrap config for daemon: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(runtimeConfigPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(runtimeConfigPath), 0o700); err != nil {
 		return fmt.Errorf("create runtime config directory: %w", err)
 	}
 	if err := writeConfigFile(runtimeConfigPath, cfg); err != nil {
@@ -282,7 +282,7 @@ func writeConfigFile(path string, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, yamlBytes, 0o644)
+	return atomicWriteConfigFile(path, yamlBytes)
 }
 
 func schedulerCommandFromConfig(configPath string, gthulhuBin string) (string, []string, bool, error) {
@@ -379,5 +379,38 @@ func ensureExecutable(path string) error {
 	if info.Mode()&0o111 == 0 {
 		return fmt.Errorf("scheduler binary is not executable: %s", path)
 	}
+	return nil
+}
+
+func atomicWriteConfigFile(path string, content []byte) error {
+	tmpFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		_ = tmpFile.Close()
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmpFile.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := tmpFile.Write(content); err != nil {
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	cleanup = false
 	return nil
 }

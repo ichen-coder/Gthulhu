@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Gthulhu/api/config"
+	"github.com/Gthulhu/api/decisionmaker/service"
 	"github.com/Gthulhu/api/pkg/logger"
 	"github.com/Gthulhu/api/pkg/util"
 	"github.com/golang-jwt/jwt/v5"
@@ -61,13 +62,13 @@ func GetJwtAuthMiddleware(tokenConfig config.TokenConfig) (func(next http.Handle
 			tokenString := authHeader[len(bearerSchema):]
 
 			// Validate JWT token
-			claims, err := validateJWT(rasKey, tokenString)
+			claims, err := validateJWT(rasKey, tokenConfig, tokenString)
 			if err != nil {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				if err := json.NewEncoder(w).Encode(ErrorResponse{
 					Success: false,
-					Error:   "Invalid or expired token: " + err.Error(),
+					Error:   "Invalid or expired token",
 				}); err != nil {
 					logger.Logger(r.Context()).Error().Err(err).Msg("Failed to write unauthorized response")
 				}
@@ -82,12 +83,13 @@ func GetJwtAuthMiddleware(tokenConfig config.TokenConfig) (func(next http.Handle
 
 // Claims represents JWT token claims
 type Claims struct {
-	ClientID string `json:"client_id"`
+	ClientID  string `json:"client_id"`
+	TokenType string `json:"token_type,omitempty"`
 	jwt.RegisteredClaims
 }
 
 // validateJWT validates a JWT token and returns the claims
-func validateJWT(rasKey *rsa.PrivateKey, tokenString string) (*Claims, error) {
+func validateJWT(rasKey *rsa.PrivateKey, tokenConfig config.TokenConfig, tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -100,8 +102,29 @@ func validateJWT(rasKey *rsa.PrivateKey, tokenString string) (*Claims, error) {
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+		if claims.TokenType != service.DMAccessTokenType {
+			return nil, fmt.Errorf("invalid token type")
+		}
+		if claims.Issuer != service.DMAccessTokenIssuer {
+			return nil, fmt.Errorf("invalid token issuer")
+		}
+		if !hasAudience(claims.Audience, service.DMAccessTokenAudience) {
+			return nil, fmt.Errorf("invalid token audience")
+		}
+		if expected := strings.TrimSpace(tokenConfig.ExpectedClientID); expected != "" && claims.ClientID != expected {
+			return nil, fmt.Errorf("unauthorized client")
+		}
 		return claims, nil
 	}
 
 	return nil, fmt.Errorf("invalid token")
+}
+
+func hasAudience(audiences []string, expected string) bool {
+	for _, audience := range audiences {
+		if audience == expected {
+			return true
+		}
+	}
+	return false
 }

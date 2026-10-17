@@ -3,6 +3,8 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -84,9 +86,13 @@ func (h *Handler) JSONResponse(ctx context.Context, w http.ResponseWriter, statu
 
 func (h *Handler) JSONBind(r *http.Request, dst any) error {
 	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
 	err := decoder.Decode(dst)
 	if err != nil {
 		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("request body must contain a single JSON object")
 	}
 	return nil
 }
